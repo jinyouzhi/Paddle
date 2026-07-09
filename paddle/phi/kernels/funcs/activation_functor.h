@@ -1640,7 +1640,7 @@ struct ReluCPUFunctor : public BaseActivationFunctor<T> {
   template <typename Device, typename X, typename Out>
   void operator()(Device d, X x, Out out) const {
     out.device(d) = x.unaryExpr([] HOSTDEVICE(T v) {
-      return v > static_cast<T>(0) ? v : static_cast<T>(0);
+      return v < static_cast<T>(0) ? static_cast<T>(0) : v;
     });
   }
 };
@@ -2136,9 +2136,11 @@ struct SoftShrinkFunctor : public BaseActivationFunctor<T> {
   template <typename Device, typename X, typename Out>
   void operator()(Device d, X x, Out out) const {
     auto lambdaT = static_cast<T>(lambda);  // NOLINT
-    auto temp1 = (x > lambdaT).template cast<T>();
-    auto temp2 = (x < -lambdaT).template cast<T>();
-    out.device(d) = temp1 * (x - lambdaT) + temp2 * (x + lambdaT);
+    auto zero_or_nan = (x == x).select(static_cast<T>(0), x);
+    out.device(d) = (x > lambdaT)
+                        .select(x - lambdaT,
+                                (x < -lambdaT)
+                                    .select(x + lambdaT, zero_or_nan));
   }
 };
 
@@ -2526,8 +2528,8 @@ template <typename T>
 struct LogSigmoidFunctor : public BaseActivationFunctor<T> {
   template <typename Device, typename X, typename Out>
   void operator()(Device d, X x, Out out) const {
-    auto temp = (-x).cwiseMax(static_cast<T>(0));  // temp = max(-x, 0)
-    out.device(d) = -temp - (((-temp).exp() + (-x - temp).exp()).log());
+    out.device(d) = x.cwiseMin(static_cast<T>(0)) -
+                    ((-x.abs()).exp() + static_cast<T>(1)).log();
   }
 };
 
@@ -2556,9 +2558,10 @@ struct LogSigmoidGradFunctor : public BaseActivationFunctor<T> {
             typename dOut,
             typename dX>
   void operator()(Device d, X x, Out out UNUSED, dOut dout, dX dx) const {
-    auto temp = (-x).cwiseMax(static_cast<T>(0));  // temp = max(-x, 0)
-    dx.device(d) =
-        dout * ((-x - temp).exp() / ((-temp).exp() + (-x - temp).exp()));
+    auto negative = (x < static_cast<T>(0)).template cast<T>();
+    auto sign = negative * static_cast<T>(2) - static_cast<T>(1);
+    auto z = (-x.abs()).exp();
+    dx.device(d) = dout * (negative - sign * (z / (static_cast<T>(1) + z)));
   }
 
   static constexpr ActBwdOpFwdDeps FwdDeps() { return ActBwdOpFwdDeps::kDepX; }
@@ -4920,9 +4923,8 @@ struct CudaSoftShrinkFunctor : public BaseActivationFunctor<T> {
   //                 0, otherwise.
   __device__ __forceinline__ T operator()(const T x) const {
     T l = static_cast<T>(lambda);
-    T temp1 = static_cast<T>(x > l);
-    T temp2 = static_cast<T>(x < -l);
-    return temp1 * (x - l) + temp2 * (x + l);
+    return x > l ? x - l
+                 : (x < -l ? x + l : (x == x ? static_cast<T>(0) : x));
   }
 };
 

@@ -156,6 +156,15 @@ class TestLogcumsumexp(unittest.TestCase):
         self.assertTrue(all(z != np.inf))
         np.testing.assert_allclose(z, y.numpy(), rtol=1e-05)
 
+        data_np = np.asarray(
+            [[np.nan, np.inf, -np.inf], [-0.3630313, 2.657818, -5.016169]],
+            dtype=np.float32,
+        )
+        data = paddle.to_tensor(data_np)
+        y = paddle.logcumsumexp(data, axis=1)
+        z = np_logcumsumexp(data_np, axis=1)
+        np.testing.assert_allclose(z, y.numpy(), rtol=1e-05)
+
     def run_static(self, use_gpu=False):
         main = paddle.static.Program()
         startup = paddle.static.Program()
@@ -191,6 +200,22 @@ class TestLogcumsumexp(unittest.TestCase):
             self.assertTrue(out[3].dtype == np.float64)
             z = np_logcumsumexp(data_np, axis=-2)
             np.testing.assert_allclose(z, out[4], rtol=1e-05)
+
+            data_np = np.asarray(
+                [
+                    [np.nan, np.inf, -np.inf],
+                    [-0.3630313, 2.657818, -5.016169],
+                ],
+                dtype=np.float32,
+            )
+            main = paddle.static.Program()
+            startup = paddle.static.Program()
+            with paddle.static.program_guard(main, startup):
+                x = paddle.static.data('X', [2, 3], dtype='float32')
+                y = paddle.logcumsumexp(x, axis=1)
+                out = exe.run(main, feed={'X': data_np}, fetch_list=[y])
+            z = np_logcumsumexp(data_np, axis=1)
+            np.testing.assert_allclose(z, out[0], rtol=1e-05)
 
     def test_cpu(self):
         paddle.disable_static(paddle.base.CPUPlace())

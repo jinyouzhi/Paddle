@@ -159,6 +159,11 @@ template <typename T>
 struct LogSumExp {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& a,
                                                      const T& b) const {
+    if (std::isnan(static_cast<double>(a)) ||
+        std::isnan(static_cast<double>(b))) {
+      return Eigen::NumTraits<T>::quiet_NaN();
+    }
+
     auto mi = Eigen::internal::scalar_min_op<T>()(a, b);
     auto ma = Eigen::internal::scalar_max_op<T>()(a, b);
 
@@ -178,14 +183,17 @@ struct LogSumExp {
     auto ma = Eigen::internal::pmax(a, b);
     using Eigen::internal::padd;
     using Eigen::internal::pcmp_lt;
+    using Eigen::internal::pcmp_eq;
     using Eigen::internal::pexp;
     using Eigen::internal::plog1p;
     using Eigen::internal::pset1;
     using Eigen::internal::psub;
 
     auto logsumexp = padd(plog1p(pexp(psub(mi, ma))), ma);
-    return pselect(
+    auto result = pselect(
         pcmp_lt(ma, pset1(Eigen::NumTraits<T>::lowest())), ma, logsumexp);
+    auto nan = pset1(Eigen::NumTraits<T>::quiet_NaN());
+    return pselect(pcmp_eq(a, a), pselect(pcmp_eq(b, b), result, nan), nan);
   }
 };
 

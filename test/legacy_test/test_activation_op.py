@@ -862,6 +862,26 @@ class TestLogSigmoidAPI(unittest.TestCase):
             expected = F.log_sigmoid(x)
             np.testing.assert_allclose(out.numpy(), expected.numpy())
 
+    def test_non_finite(self):
+        x_np = np.asarray(
+            [[np.nan, np.inf, -np.inf], [0.8477402, 0.35623318, -0.11209742]],
+            dtype='float32',
+        )
+        out_ref = np.minimum(x_np, 0) - np.log1p(np.exp(-np.abs(x_np)))
+
+        with static_guard():
+            with paddle.static.program_guard(paddle.static.Program()):
+                x = paddle.static.data('X', x_np.shape, dtype='float32')
+                out = F.log_sigmoid(x)
+                exe = paddle.static.Executor(self.place)
+                res = exe.run(feed={'X': x_np}, fetch_list=[out])
+            np.testing.assert_allclose(out_ref, res[0], rtol=1e-05)
+
+        with dynamic_guard():
+            x = paddle.to_tensor(x_np)
+            out = F.log_sigmoid(x)
+            np.testing.assert_allclose(out_ref, out.numpy(), rtol=1e-05)
+
 
 class TestLogSigmoidOutAndParaDecorator(unittest.TestCase):
     def setUp(self) -> None:
@@ -1681,10 +1701,12 @@ class TestHardtanhAPI(unittest.TestCase):
 
 
 def ref_softshrink(x, threshold=0.5):
-    out = np.copy(x)
-    out = (out < -threshold) * (out + threshold) + (out > threshold) * (
-        out - threshold
-    )
+    out = np.zeros_like(x)
+    greater = x > threshold
+    less = x < -threshold
+    out[greater] = x[greater] - threshold
+    out[less] = x[less] + threshold
+    out[np.isnan(x)] = x[np.isnan(x)]
     return out
 
 
@@ -1764,6 +1786,26 @@ class TestSoftshrinkAPI(unittest.TestCase):
             out2 = softshrink(input=x)
             for r in [out1, out2]:
                 np.testing.assert_allclose(out_ref, r.numpy(), rtol=1e-05)
+
+    def test_non_finite(self):
+        x_np = np.asarray(
+            [[np.nan, np.inf, -np.inf], [-2.422834, 1.54217, 1.1015607]],
+            dtype='float32',
+        )
+        out_ref = ref_softshrink(x_np, 0.5)
+
+        with static_guard():
+            with paddle.static.program_guard(paddle.static.Program()):
+                x = paddle.static.data('X', x_np.shape, dtype='float32')
+                out = F.softshrink(x)
+                exe = paddle.static.Executor(self.place)
+                res = exe.run(feed={'X': x_np}, fetch_list=[out])
+            np.testing.assert_allclose(out_ref, res[0], rtol=1e-05)
+
+        with dynamic_guard():
+            x = paddle.to_tensor(x_np)
+            out = F.softshrink(x)
+            np.testing.assert_allclose(out_ref, out.numpy(), rtol=1e-05)
 
     def test_errors(self):
         with (
@@ -2998,8 +3040,9 @@ class TestRelu_NanInput(TestActivation):
         x = np.random.uniform(-1, 1, self.shape).astype(self.dtype)
         # The same reason with TestAbs
         x[np.abs(x) < 0.005] = 0.02
-        x[-1] = float('nan')
+        x.flat[:3] = [float('nan'), float('inf'), float('-inf')]
         self.x_np = x
+        self.out_ref = np.maximum(x, 0)
 
     def test_check_output(self):
         # Override to prevent calling base class method that expects inputs/outputs
@@ -3014,16 +3057,13 @@ class TestRelu_NanInput(TestActivation):
             out = paddle.nn.functional.relu(x)
             exe = paddle.static.Executor()
             res = exe.run(feed={'X': self.x_np}, fetch_list=[out])
-            nan_count = np.isnan(res[0]).astype('int32').sum()
-            self.assertTrue(nan_count.item() > 0)
+            np.testing.assert_allclose(self.out_ref, res[0], rtol=1e-05)
 
     def test_dygraph(self):
         with dynamic_guard():
             tensor_x = paddle.to_tensor(self.x_np)
             out = paddle.nn.functional.relu(tensor_x)
-            nan_count = paddle.isnan(out).cast('int32').sum()
-            nan_count = nan_count.numpy()
-            self.assertTrue(nan_count.item() > 0)
+            np.testing.assert_allclose(self.out_ref, out.numpy(), rtol=1e-05)
 
     def test_check_grad(self):
         pass
